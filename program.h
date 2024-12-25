@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h> // Çıkış dosyası açma için ekledi
 
 // Renk Kodları
 #define KNRM  "\x1B[0m"   // Normal
@@ -48,8 +49,9 @@ char **split_line(char *line); // Kullanıcı girdisini tokenlara ayırır.
 int execute_external(char **args); // Yerleşik olmayan komutları harici olarak çalıştırır.
 int execute_command(char **args); // Girilen komutu analiz eder ve uygun şekilde çalıştırır.
 
-// Giriş yönlendirme fonksiyonu
-int execute_external_with_redirection(char **args, char *input_file);
+// Giriş ve Çıkış Yönlendirme Fonksiyonları
+int execute_external_with_input_redirection(char **args, char *input_file);
+int execute_external_with_output_redirection(char **args, char *output_file);
 
 // Diğer Yardımcı Fonksiyonlar
 void print_spaces();

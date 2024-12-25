@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h> // Çıkış dosyası açma için ekledi
 #include "program.h"  // Kendi header dosyanız
 
 #define BUFFER_SIZE 1024
@@ -136,26 +137,64 @@ char **split_line(char *line) {
 /**
  * Giriş yönlendirmesi ile birlikte harici komutları çalıştıran fonksiyon
  */
-int execute_external_with_redirection(char **args, char *input_file) {
+int execute_external_with_input_redirection(char **args, char *input_file) {
     pid_t pid, wpid;
     int status;
-
-    // Giriş dosyasını aç
-    FILE *file = fopen(input_file, "r");
-    if (file == NULL) {
-        fprintf(stderr, "Giriş dosyası bulunamadı.\n");
-        return 1;
-    }
 
     pid = fork();
     if (pid == 0) {
         // Çocuk süreç: giriş dosyasını stdin'e yönlendir
-        if (dup2(fileno(file), STDIN_FILENO) == -1) {
-            perror("dup2");
-            fclose(file);
+        int fd_in = open(input_file, O_RDONLY);
+        if (fd_in < 0) {
+            fprintf(stderr, "Giriş dosyası bulunamadı.\n");
             exit(EXIT_FAILURE);
         }
-        fclose(file);
+        if (dup2(fd_in, STDIN_FILENO) == -1) {
+            perror("dup2");
+            close(fd_in);
+            exit(EXIT_FAILURE);
+        }
+        close(fd_in);
+
+        // Komutu yürüt
+        if (execvp(args[0], args) == -1) {
+            perror("osprojectsh");
+        }
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        // Hata durumu
+        perror("osprojectsh");
+    } else {
+        // Ebeveyn süreç: çocuğun bitmesini bekle
+        do {
+            wpid = waitpid(pid, &status, WUNTRACED);
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+
+    return 1;
+}
+
+/**
+ * Çıkış yönlendirmesi ile birlikte harici komutları çalıştıran fonksiyon
+ */
+int execute_external_with_output_redirection(char **args, char *output_file) {
+    pid_t pid, wpid;
+    int status;
+
+    pid = fork();
+    if (pid == 0) {
+        // Çocuk süreç: çıkış dosyasını stdout'a yönlendir
+        int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd_out < 0) {
+            perror("Çıkış dosyası açılamadı");
+            exit(EXIT_FAILURE);
+        }
+        if (dup2(fd_out, STDOUT_FILENO) == -1) {
+            perror("dup2");
+            close(fd_out);
+            exit(EXIT_FAILURE);
+        }
+        close(fd_out);
 
         // Komutu yürüt
         if (execvp(args[0], args) == -1) {
@@ -201,7 +240,7 @@ int execute_external(char **args) {
 
 /**
  * Girilen komutu analiz eder ve uygun şekilde çalıştırır.
- * Giriş yönlendirmesi kontrolü eklenmiştir.
+ * Giriş ve Çıkış yönlendirmesi kontrolü eklenmiştir.
  */
 int execute_command(char **args) {
     if (args[0] == NULL) {
@@ -209,9 +248,11 @@ int execute_command(char **args) {
         return 1;
     }
 
-    // Giriş yönlendirmesi kontrolü
+    // Giriş ve Çıkış yönlendirmesi kontrolü
     int i;
     char *input_file = NULL;
+    char *output_file = NULL;
+
     for (i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "<") == 0) {
             if (args[i + 1] == NULL) {
@@ -220,20 +261,85 @@ int execute_command(char **args) {
             }
             input_file = args[i + 1];
             args[i] = NULL; // args dizisini '<' öncesi ile sınırlamak için
-            break;
+            i++; // 'GirişDosyası' argümanını atlamak için
+        } else if (strcmp(args[i], ">") == 0) {
+            if (args[i + 1] == NULL) {
+                fprintf(stderr, "Çıkış dosyası belirtilmedi.\n");
+                return 1;
+            }
+            output_file = args[i + 1];
+            args[i] = NULL; // args dizisini '>' öncesi ile sınırlamak için
+            i++; // 'ÇıkışDosyası' argümanını atlamak için
         }
     }
 
-    if (input_file != NULL) {
-        return execute_external_with_redirection(args, input_file);
+    if (input_file != NULL && output_file != NULL) {
+        // Hem giriş hem de çıkış yönlendirmesi mevcut
+        pid_t pid, wpid;
+        int status;
+
+        pid = fork();
+        if (pid == 0) {
+            // Çocuk süreç
+
+            // Giriş yönlendirmesi
+            int fd_in = open(input_file, O_RDONLY);
+            if (fd_in < 0) {
+                fprintf(stderr, "Giriş dosyası bulunamadı.\n");
+                exit(EXIT_FAILURE);
+            }
+            if (dup2(fd_in, STDIN_FILENO) == -1) {
+                perror("dup2");
+                close(fd_in);
+                exit(EXIT_FAILURE);
+            }
+            close(fd_in);
+
+            // Çıkış yönlendirmesi
+            int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd_out < 0) {
+                perror("Çıkış dosyası açılamadı");
+                exit(EXIT_FAILURE);
+            }
+            if (dup2(fd_out, STDOUT_FILENO) == -1) {
+                perror("dup2");
+                close(fd_out);
+                exit(EXIT_FAILURE);
+            }
+            close(fd_out);
+
+            // Komutu yürüt
+            if (execvp(args[0], args) == -1) {
+                perror("osprojectsh");
+            }
+            exit(EXIT_FAILURE);
+        } else if (pid < 0) {
+            // Hata durumu
+            perror("osprojectsh");
+        } else {
+            // Ebeveyn süreç: çocuğun bitmesini bekle
+            do {
+                wpid = waitpid(pid, &status, WUNTRACED);
+            } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        }
+
+        return 1;
+    } else if (input_file != NULL) {
+        // Sadece giriş yönlendirmesi mevcut
+        return execute_external_with_input_redirection(args, input_file);
+    } else if (output_file != NULL) {
+        // Sadece çıkış yönlendirmesi mevcut
+        return execute_external_with_output_redirection(args, output_file);
     }
 
-    for (int i = 0; i < num_builtins(); i++) {
-        if (strcmp(args[0], builtin_commands[i]) == 0) {
-            return (*builtin_functions[i])(args);
+    // Yerleşik komutlar kontrolü
+    for (int j = 0; j < num_builtins(); j++) {
+        if (strcmp(args[0], builtin_commands[j]) == 0) {
+            return (*builtin_functions[j])(args);
         }
     }
 
+    // Yerleşik olmayan komutları çalıştır
     return execute_external(args);
 }
 
