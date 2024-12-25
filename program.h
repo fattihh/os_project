@@ -44,9 +44,12 @@ int shell_help(char **args);
 int shell_quit(char **args);
 
 // Yardımcı Fonksiyonlar
-char **split_line(char *line); //Kullanıcı girdisini tokenlara ayırır.
-int execute_external(char **args); //Yerleşik olmayan komutları harici olarak çalıştırır.
-int execute_command(char **args); //Girilen komutu analiz eder ve uygun şekilde çalıştırır.
+char **split_line(char *line); // Kullanıcı girdisini tokenlara ayırır.
+int execute_external(char **args); // Yerleşik olmayan komutları harici olarak çalıştırır.
+int execute_command(char **args); // Girilen komutu analiz eder ve uygun şekilde çalıştırır.
+
+// Giriş yönlendirme fonksiyonu
+int execute_external_with_redirection(char **args, char *input_file);
 
 // Diğer Yardımcı Fonksiyonlar
 void print_spaces();

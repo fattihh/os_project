@@ -133,6 +133,48 @@ char **split_line(char *line) {
     return tokens;
 }
 
+/**
+ * Giriş yönlendirmesi ile birlikte harici komutları çalıştıran fonksiyon
+ */
+int execute_external_with_redirection(char **args, char *input_file) {
+    pid_t pid, wpid;
+    int status;
+
+    // Giriş dosyasını aç
+    FILE *file = fopen(input_file, "r");
+    if (file == NULL) {
+        fprintf(stderr, "Giriş dosyası bulunamadı.\n");
+        return 1;
+    }
+
+    pid = fork();
+    if (pid == 0) {
+        // Çocuk süreç: giriş dosyasını stdin'e yönlendir
+        if (dup2(fileno(file), STDIN_FILENO) == -1) {
+            perror("dup2");
+            fclose(file);
+            exit(EXIT_FAILURE);
+        }
+        fclose(file);
+
+        // Komutu yürüt
+        if (execvp(args[0], args) == -1) {
+            perror("osprojectsh");
+        }
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        // Hata durumu
+        perror("osprojectsh");
+    } else {
+        // Ebeveyn süreç: çocuğun bitmesini bekle
+        do {
+            wpid = waitpid(pid, &status, WUNTRACED);
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+
+    return 1;
+}
+
 int execute_external(char **args) {
     pid_t pid, wpid;
     int status;
@@ -157,10 +199,33 @@ int execute_external(char **args) {
     return 1;
 }
 
+/**
+ * Girilen komutu analiz eder ve uygun şekilde çalıştırır.
+ * Giriş yönlendirmesi kontrolü eklenmiştir.
+ */
 int execute_command(char **args) {
     if (args[0] == NULL) {
         // Boş komut girilmiş
         return 1;
+    }
+
+    // Giriş yönlendirmesi kontrolü
+    int i;
+    char *input_file = NULL;
+    for (i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "<") == 0) {
+            if (args[i + 1] == NULL) {
+                fprintf(stderr, "Giriş dosyası belirtilmedi.\n");
+                return 1;
+            }
+            input_file = args[i + 1];
+            args[i] = NULL; // args dizisini '<' öncesi ile sınırlamak için
+            break;
+        }
+    }
+
+    if (input_file != NULL) {
+        return execute_external_with_redirection(args, input_file);
     }
 
     for (int i = 0; i < num_builtins(); i++) {
