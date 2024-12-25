@@ -1,10 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <fcntl.h> // Çıkış dosyası açma için ekledi
-#include "program.h"  // Kendi header dosyanız
+#include "program.h"    // Önce kendi header dosyanızı dahil edin
 
 #define BUFFER_SIZE 1024
 #define TOK_DELIM " \t\r\n\a"
@@ -57,6 +51,16 @@ void initialize_shell() {
     for (i = 0; i < 40; i++)
         printf("%s", "=");
     printf("\n");
+
+    // SIGCHLD sinyalini yakalamak için sinyal işleyicisini ayarla
+    struct sigaction sa;
+    sa.sa_handler = &handle_sigchld;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
 }
 
 /**
@@ -214,6 +218,77 @@ int execute_external_with_output_redirection(char **args, char *output_file) {
     return 1;
 }
 
+/**
+ * Arka planda komutları çalıştıran fonksiyon
+ */
+int execute_external_background(char **args) {
+    pid_t pid;
+    int status;
+
+    pid = fork();
+    if (pid == 0) {
+        // Çocuk süreç: komutu yürüt
+        // Arka plan sürecinde terminali kontrol etmek istemiyorsanız, aşağıdaki satırı ekleyebilirsiniz:
+        // setsid();
+        if (execvp(args[0], args) == -1) {
+            perror("osprojectsh");
+        }
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        // Hata durumu
+        perror("osprojectsh");
+    } else {
+        // Ebeveyn süreç: arka plan sürecini listeye ekle
+        bg_process *new_bg = malloc(sizeof(bg_process));
+        if (!new_bg) {
+            fprintf(stderr, "osprojectsh: Bellek tahsisi başarısız\n");
+            return 1;
+        }
+        new_bg->pid = pid;
+        new_bg->next = bg_list;
+        bg_list = new_bg;
+        // Arka plan sürecinin başlatıldığını bildir
+        printf("[%d] retval: 0\n", pid);
+    }
+
+    return 1;
+}
+
+/**
+ * Arka plan süreçlerini yakalayan sinyal işleyicisi
+ */
+void handle_sigchld(int sig) {
+    pid_t pid;
+    int status;
+
+    // Çocuk süreçlerin sonlanmasını kontrol et
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        // Arka plan sürecini listeden çıkar
+        bg_process **current = &bg_list;
+        while (*current) {
+            if ((*current)->pid == pid) {
+                bg_process *temp = *current;
+                *current = (*current)->next;
+                free(temp);
+                break;
+            }
+            current = &((*current)->next);
+        }
+
+        // Exit kodunu al
+        int exit_code = 0;
+        if (WIFEXITED(status)) {
+            exit_code = WEXITSTATUS(status);
+        }
+
+        // Kullanıcıya bildir
+        printf("\n[%d] retval: %d\n", pid, exit_code);
+        display_prompt();
+        fflush(stdout);
+    }
+}
+
+
 int execute_external(char **args) {
     pid_t pid, wpid;
     int status;
@@ -240,7 +315,7 @@ int execute_external(char **args) {
 
 /**
  * Girilen komutu analiz eder ve uygun şekilde çalıştırır.
- * Giriş ve Çıkış yönlendirmesi kontrolü eklenmiştir.
+ * Giriş, Çıkış yönlendirmesi ve arka plan çalıştırma kontrolü eklenmiştir.
  */
 int execute_command(char **args) {
     if (args[0] == NULL) {
@@ -248,8 +323,18 @@ int execute_command(char **args) {
         return 1;
     }
 
-    // Giriş ve Çıkış yönlendirmesi kontrolü
+    // Arka plan çalıştırma kontrolü
+    int background = 0;
     int i;
+    for (i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "&") == 0) {
+            background = 1;
+            args[i] = NULL; // '&' karakterini kaldır
+            break;
+        }
+    }
+
+    // Giriş ve Çıkış yönlendirmesi kontrolü
     char *input_file = NULL;
     char *output_file = NULL;
 
@@ -271,6 +356,10 @@ int execute_command(char **args) {
             args[i] = NULL; // args dizisini '>' öncesi ile sınırlamak için
             i++; // 'ÇıkışDosyası' argümanını atlamak için
         }
+    }
+
+    if (background) {
+        return execute_external_background(args);
     }
 
     if (input_file != NULL && output_file != NULL) {
