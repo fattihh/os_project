@@ -1,4 +1,4 @@
-#include "program.h"    // Önce kendi header dosyanızı dahil edin
+#include "program.h"
 
 #define BUFFER_SIZE 1024
 #define TOK_DELIM " \t\r\n\a"
