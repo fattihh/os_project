@@ -657,14 +657,34 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Girdiyi parçalara ayır
-        args = split_line(line);
+        /*
+         * Burada gelen satırı noktalı virgüle göre bölüyoruz.
+         * Her parça (command_part), normalde tek başına yazılan
+         * bir komut satırı gibi ele alınacak.
+         */
+        char *saveptr; 
+        char *command_part = strtok_r(line, ";", &saveptr);
 
-        // Komutu yürüt
-        status = execute_command(args, line);
+        // Bir satırda birden fazla komut (noktalı virgüllerle ayrılmış) olabilir
+        while (command_part != NULL) {
+            // Önde gelen boşlukları temizleyelim
+            while (*command_part == ' ' || *command_part == '\t') {
+                command_part++;
+            }
 
-        // Belleği temizle
-        free(args);
+            // Komut satırını token'lara ayır
+            args = split_line(command_part);
+
+            // Eğer gerçekten bir komut varsa (args[0] boş değilse) çalıştır
+            if (args[0] != NULL) {
+                status = execute_command(args, command_part);
+            }
+
+            free(args);
+
+            // Sonraki komut için ilerle
+            command_part = strtok_r(NULL, ";", &saveptr);
+        }
 
     } while (status);
 
@@ -674,3 +694,5 @@ int main(int argc, char **argv) {
 
     return EXIT_SUCCESS;
 }
+
+
